@@ -7,6 +7,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
+from torchvision import datasets as datasets
+from PIL import Image
 
 
 def is_power_of_2(num):
@@ -36,6 +38,20 @@ class CustomTensorDataset(Dataset):
     def __len__(self):
         return self.data_tensor.size(0)
 
+class CIFAR10Unsupervised(datasets.CIFAR10):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def __getitem__(self, index):
+        # doing this so that it is consistent with all other datasets
+        # to return a PIL Image
+        img = Image.fromarray(self.data[index])
+        if self.transform is not None:
+            img = self.transform(img)
+        return img
+
+    def __len__(self):
+        return len(self.data)
 
 def return_data(args):
     name = args.dataset
@@ -73,6 +89,12 @@ def return_data(args):
         train_kwargs = {'data_tensor':data}
         dset = CustomTensorDataset
 
+    elif name.lower() == 'cifar10':
+        transform = transforms.Compose([
+            transforms.ToTensor(),])
+        root = os.path.join(dset_dir, 'cifar10_data')
+        train_kwargs = {'root': root, 'transform': transform, 'download': True}
+        dset = CIFAR10Unsupervised
     else:
         raise NotImplementedError
 

@@ -98,6 +98,9 @@ class Solver(object):
         elif args.dataset.lower() == 'celeba':
             self.nc = 3
             self.decoder_dist = 'gaussian'
+        elif args.dataset.lower() == 'cifar10':
+            self.nc = 3
+            self.decoder_dist = 'gaussian'
         else:
             raise NotImplementedError
 
@@ -108,7 +111,10 @@ class Solver(object):
         else:
             raise NotImplementedError('only support model H or B')
 
-        self.net = net(self.z_dim, self.nc).to(self.device)
+        if args.dataset.lower() == 'cifar10':
+            self.net = net(self.z_dim, self.nc, input_size=32).to(self.device)
+        else:
+            self.net = net(self.z_dim, self.nc).to(self.device)
         self.optim = optim.Adam(self.net.parameters(), lr=self.lr,
                                     betas=(self.beta1, self.beta2))
 
@@ -408,7 +414,10 @@ class Solver(object):
             output_dir = os.path.join(self.output_dir, str(self.global_iter))
             os.makedirs(output_dir, exist_ok=True)
             gifs = torch.cat(gifs)
-            gifs = gifs.view(len(Z), self.z_dim, len(interpolation), self.nc, 64, 64).transpose(1, 2)
+            if self.dataset == 'cifar10':
+                gifs = gifs.view(len(Z), self.z_dim, len(interpolation), self.nc, 32, 32).transpose(1, 2)
+            else:
+                gifs = gifs.view(len(Z), self.z_dim, len(interpolation), self.nc, 64, 64).transpose(1, 2)
             for i, key in enumerate(Z.keys()):
                 for j, val in enumerate(interpolation):
                     save_image(tensor=gifs[i][j].cpu(),
