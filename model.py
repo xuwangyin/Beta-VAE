@@ -8,8 +8,8 @@ from torch.autograd import Variable
 
 
 def reparametrize(mu, logvar):
-    std = logvar.div(2).exp()
-    eps = Variable(std.data.new(std.size()).normal_())
+    std = torch.exp(0.5 * logvar)
+    eps = torch.randn_like(std)
     return mu + std*eps
 
 

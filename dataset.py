@@ -54,7 +54,7 @@ def return_data(args):
         dset = CustomImageFolder
 
     elif name.lower() == 'celeba':
-        root = os.path.join(dset_dir, 'CelebA')
+        root = os.path.join(dset_dir, 'CelebAHQ64PNGLANCZOS')
         transform = transforms.Compose([
             transforms.Resize((image_size, image_size)),
             transforms.ToTensor(),])

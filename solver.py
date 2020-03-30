@@ -10,8 +10,8 @@ import visdom
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
-from torch.autograd import Variable
 from torchvision.utils import make_grid, save_image
+import torchvision.transforms as transforms
 
 from utils import cuda, grid2gif
 from model import BetaVAE_H, BetaVAE_B
@@ -76,6 +76,7 @@ class Solver(object):
         self.use_cuda = args.cuda and torch.cuda.is_available()
         self.max_iter = args.max_iter
         self.global_iter = 0
+        self.device = 'cuda'
 
         self.z_dim = args.z_dim
         self.beta = args.beta
@@ -107,7 +108,7 @@ class Solver(object):
         else:
             raise NotImplementedError('only support model H or B')
 
-        self.net = cuda(net(self.z_dim, self.nc), self.use_cuda)
+        self.net = net(self.z_dim, self.nc).to(self.device)
         self.optim = optim.Adam(self.net.parameters(), lr=self.lr,
                                     betas=(self.beta1, self.beta2))
 
@@ -146,7 +147,7 @@ class Solver(object):
 
     def train(self):
         self.net_mode(train=True)
-        self.C_max = Variable(cuda(torch.FloatTensor([self.C_max]), self.use_cuda))
+        self.C_max = torch.FloatTensor([self.C_max]).to(self.device)
         out = False
 
         pbar = tqdm(total=self.max_iter)
@@ -156,7 +157,7 @@ class Solver(object):
                 self.global_iter += 1
                 pbar.update(1)
 
-                x = Variable(cuda(x, self.use_cuda))
+                x = x.to(self.device)
                 x_recon, mu, logvar = self.net(x)
                 recon_loss = reconstruction_loss(x, x_recon, self.decoder_dist)
                 total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
@@ -164,7 +165,7 @@ class Solver(object):
                 if self.objective == 'H':
                     beta_vae_loss = recon_loss + self.beta*total_kld
                 elif self.objective == 'B':
-                    C = torch.clamp(self.C_max/self.C_stop_iter*self.global_iter, 0, self.C_max.data[0])
+                    C = torch.clamp(self.C_max/self.C_stop_iter*self.global_iter, 0, self.C_max.item())
                     beta_vae_loss = recon_loss + self.gamma*(total_kld-C).abs()
 
                 self.optim.zero_grad()
@@ -179,16 +180,16 @@ class Solver(object):
 
                 if self.global_iter%self.display_step == 0:
                     pbar.write('[{}] recon_loss:{:.3f} total_kld:{:.3f} mean_kld:{:.3f}'.format(
-                        self.global_iter, recon_loss.data[0], total_kld.data[0], mean_kld.data[0]))
+                        self.global_iter, recon_loss.item(), total_kld.item(), mean_kld.item()))
 
-                    var = logvar.exp().mean(0).data
-                    var_str = ''
-                    for j, var_j in enumerate(var):
-                        var_str += 'var{}:{:.4f} '.format(j+1, var_j)
-                    pbar.write(var_str)
+                    # var = logvar.exp().mean(0).data
+                    # var_str = ''
+                    # for j, var_j in enumerate(var):
+                    #     var_str += 'var{}:{:.4f} '.format(j+1, var_j)
+                    # pbar.write(var_str)
 
-                    if self.objective == 'B':
-                        pbar.write('C:{:.3f}'.format(C.data[0]))
+                    # if self.objective == 'B':
+                    #     pbar.write('C:{:.3f}'.format(C.item()))
 
                     if self.viz_on:
                         self.gather.insert(images=x.data)
@@ -355,34 +356,30 @@ class Solver(object):
         rand_idx = random.randint(1, n_dsets-1)
 
         random_img = self.data_loader.dataset.__getitem__(rand_idx)
-        random_img = Variable(cuda(random_img, self.use_cuda), volatile=True).unsqueeze(0)
+        random_img = random_img.unsqueeze(0).to(self.device)
         random_img_z = encoder(random_img)[:, :self.z_dim]
 
-        random_z = Variable(cuda(torch.rand(1, self.z_dim), self.use_cuda), volatile=True)
+        random_z = torch.rand(1, self.z_dim, device=self.device)
 
         if self.dataset == 'dsprites':
             fixed_idx1 = 87040 # square
             fixed_idx2 = 332800 # ellipse
             fixed_idx3 = 578560 # heart
 
-            fixed_img1 = self.data_loader.dataset.__getitem__(fixed_idx1)
-            fixed_img1 = Variable(cuda(fixed_img1, self.use_cuda), volatile=True).unsqueeze(0)
+            fixed_img1 = self.data_loader.dataset.__getitem__(fixed_idx1).to(self.device).unsqueeze(0)
             fixed_img_z1 = encoder(fixed_img1)[:, :self.z_dim]
 
-            fixed_img2 = self.data_loader.dataset.__getitem__(fixed_idx2)
-            fixed_img2 = Variable(cuda(fixed_img2, self.use_cuda), volatile=True).unsqueeze(0)
+            fixed_img2 = self.data_loader.dataset.__getitem__(fixed_idx2).to(self.device).unsqueeze(0)
             fixed_img_z2 = encoder(fixed_img2)[:, :self.z_dim]
 
-            fixed_img3 = self.data_loader.dataset.__getitem__(fixed_idx3)
-            fixed_img3 = Variable(cuda(fixed_img3, self.use_cuda), volatile=True).unsqueeze(0)
+            fixed_img3 = self.data_loader.dataset.__getitem__(fixed_idx3).to(self.device).unsqueeze(0)
             fixed_img_z3 = encoder(fixed_img3)[:, :self.z_dim]
 
             Z = {'fixed_square':fixed_img_z1, 'fixed_ellipse':fixed_img_z2,
                  'fixed_heart':fixed_img_z3, 'random_img':random_img_z}
         else:
             fixed_idx = 0
-            fixed_img = self.data_loader.dataset.__getitem__(fixed_idx)
-            fixed_img = Variable(cuda(fixed_img, self.use_cuda), volatile=True).unsqueeze(0)
+            fixed_img = self.data_loader.dataset.__getitem__(fixed_idx).to(self.device).unsqueeze(0)
             fixed_img_z = encoder(fixed_img)[:, :self.z_dim]
 
             Z = {'fixed_img':fixed_img_z, 'random_img':random_img_z, 'random_z':random_z}
@@ -415,13 +412,37 @@ class Solver(object):
             for i, key in enumerate(Z.keys()):
                 for j, val in enumerate(interpolation):
                     save_image(tensor=gifs[i][j].cpu(),
-                               filename=os.path.join(output_dir, '{}_{}.jpg'.format(key, j)),
+                               fp=os.path.join(output_dir, '{}_{}.jpg'.format(key, j)),
                                nrow=self.z_dim, pad_value=1)
 
                 grid2gif(os.path.join(output_dir, key+'*.jpg'),
                          os.path.join(output_dir, key+'.gif'), delay=10)
 
         self.net_mode(train=True)
+
+    def rand_samples(self, num_samples):
+        import numpy as np
+        from PIL import Image
+        import matplotlib.pyplot as plt
+        self.net_mode(train=False)
+        z = torch.randn(num_samples, self.z_dim, device=self.device)
+        with torch.no_grad():
+            out = F.sigmoid(self.net.decoder(z))
+        self.net_mode(train=True)
+        out = out.cpu()
+        grid = make_grid(out[:64], nrow=8, normalize=True)
+        plt.imshow(transforms.ToPILImage()(grid))
+        plt.show()
+        out = out.numpy().transpose([0, 2, 3, 1])
+        out = (out * 255).astype(np.uint8)
+        out128 = []
+        for i in range(out.shape[0]):
+            im = Image.fromarray(out[i]).resize([128, 128], resample=Image.LANCZOS)
+            out128.append(np.array(im))
+        out128 = np.stack(out128, axis=0)
+        np.save('img_seed_celebahq128_betavae.npy', out128)
+        return out128
+
 
     def net_mode(self, train):
         if not isinstance(train, bool):

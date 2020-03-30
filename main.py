@@ -23,7 +23,8 @@ def main(args):
     if args.train:
         net.train()
     else:
-        net.traverse()
+        # net.traverse()
+        net.rand_samples(100)
 
 
 if __name__ == "__main__":
