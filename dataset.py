@@ -95,6 +95,22 @@ def return_data(args):
         root = os.path.join(dset_dir, 'cifar10_data')
         train_kwargs = {'root': root, 'transform': transform, 'download': True}
         dset = CIFAR10Unsupervised
+
+    elif name.lower() == 'church128':
+        root = os.path.join(dset_dir, 'church_outdoor_train_png_128')
+        transform = transforms.Compose([
+            # transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),])
+        train_kwargs = {'root':root, 'transform':transform}
+        dset = CustomImageFolder
+
+    elif name.lower() == 'celebahq128':
+        root = os.path.join(dset_dir, 'CelebAHQ128PNGLANCZOS')
+        transform = transforms.Compose([
+            # transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),])
+        train_kwargs = {'root':root, 'transform':transform}
+        dset = CustomImageFolder
     else:
         raise NotImplementedError
 

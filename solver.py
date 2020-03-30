@@ -101,6 +101,9 @@ class Solver(object):
         elif args.dataset.lower() == 'cifar10':
             self.nc = 3
             self.decoder_dist = 'gaussian'
+        elif args.dataset.lower() in ['church128', 'celebahq128']:
+            self.nc = 3
+            self.decoder_dist = 'gaussian'
         else:
             raise NotImplementedError
 
@@ -113,6 +116,8 @@ class Solver(object):
 
         if args.dataset.lower() == 'cifar10':
             self.net = net(self.z_dim, self.nc, input_size=32).to(self.device)
+        elif args.dataset.lower() in ['church128', 'celebahq128']:
+            self.net = net(self.z_dim, self.nc, input_size=128).to(self.device)
         else:
             self.net = net(self.z_dim, self.nc).to(self.device)
         self.optim = optim.Adam(self.net.parameters(), lr=self.lr,
@@ -198,14 +203,18 @@ class Solver(object):
                     #     pbar.write('C:{:.3f}'.format(C.item()))
 
                     if self.viz_on:
-                        self.gather.insert(images=x.data)
-                        self.gather.insert(images=F.sigmoid(x_recon).data)
+                        if self.dataset.lower() in ['church128', 'celebahq128']:
+                            self.gather.insert(images=x.data[:16])
+                            self.gather.insert(images=F.sigmoid(x_recon).data[:16])
+                        else:
+                            self.gather.insert(images=x.data)
+                            self.gather.insert(images=F.sigmoid(x_recon).data)
                         self.viz_reconstruction()
                         self.viz_lines()
                         self.gather.flush()
 
-                    if self.viz_on or self.save_output:
-                        self.viz_traverse()
+                    # if self.viz_on or self.save_output:
+                    #     self.viz_traverse()
 
                 if self.global_iter%self.save_step == 0:
                     self.save_checkpoint('last')
@@ -416,6 +425,8 @@ class Solver(object):
             gifs = torch.cat(gifs)
             if self.dataset == 'cifar10':
                 gifs = gifs.view(len(Z), self.z_dim, len(interpolation), self.nc, 32, 32).transpose(1, 2)
+            elif self.dataset in ['church128', 'celebahq128']:
+                gifs = gifs.view(len(Z), self.z_dim, len(interpolation), self.nc, 128, 128).transpose(1, 2)
             else:
                 gifs = gifs.view(len(Z), self.z_dim, len(interpolation), self.nc, 64, 64).transpose(1, 2)
             for i, key in enumerate(Z.keys()):
@@ -444,13 +455,17 @@ class Solver(object):
         plt.show()
         out = out.numpy().transpose([0, 2, 3, 1])
         out = (out * 255).astype(np.uint8)
-        out128 = []
-        for i in range(out.shape[0]):
-            im = Image.fromarray(out[i]).resize([128, 128], resample=Image.LANCZOS)
-            out128.append(np.array(im))
-        out128 = np.stack(out128, axis=0)
-        np.save('img_seed_celebahq128_betavae.npy', out128)
-        return out128
+        if self.dataset in ['cifar10', 'church128', 'celebahq128']:
+            np.save('img_seed_{}_betavae.npy'.format(self.dataset), out)
+            return out
+        else:
+            out128 = []
+            for i in range(out.shape[0]):
+                im = Image.fromarray(out[i]).resize([128, 128], resample=Image.LANCZOS)
+                out128.append(np.array(im))
+            out128 = np.stack(out128, axis=0)
+            np.save('img_seed_celebahq128_betavae.npy', out128)
+            return out128
 
 
     def net_mode(self, train):
