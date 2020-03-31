@@ -6,6 +6,7 @@ warnings.filterwarnings("ignore")
 import os
 from tqdm import tqdm
 import visdom
+import numpy as np
 
 import torch
 import torch.optim as optim
@@ -212,6 +213,7 @@ class Solver(object):
                         self.viz_reconstruction()
                         self.viz_lines()
                         self.gather.flush()
+                        self.viz_rand_samples()
 
                     # if self.viz_on or self.save_output:
                     #     self.viz_traverse()
@@ -357,6 +359,19 @@ class Solver(object):
                                             legend=legend[:self.z_dim],
                                             xlabel='iteration',
                                             title='posterior variance',))
+        self.net_mode(train=True)
+
+    def viz_rand_samples(self):
+        np.random.seed(12)
+        z = torch.from_numpy(np.random.randn(64, self.z_dim).astype(np.float32)).to(self.device)
+        # z = torch.randn(64, self.z_dim, device=self.device)
+        self.net_mode(train=False)
+        with torch.no_grad():
+            samples = F.sigmoid(self.net.decoder(z)).cpu()
+        title = 'rand_samples(iter:{})'.format(self.global_iter)
+
+        self.viz.images(samples, env=self.viz_name+'_rand_samples',
+                        opts=dict(title=title), nrow=8)
         self.net_mode(train=True)
 
     def viz_traverse(self, limit=3, inter=2/3, loc=-1):
