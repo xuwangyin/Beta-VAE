@@ -363,15 +363,14 @@ class Solver(object):
 
     def viz_rand_samples(self):
         np.random.seed(12)
-        z = torch.from_numpy(np.random.randn(64, self.z_dim).astype(np.float32)).to(self.device)
-        # z = torch.randn(64, self.z_dim, device=self.device)
+        z = torch.from_numpy(np.random.randn(36, self.z_dim).astype(np.float32)).to(self.device)
         self.net_mode(train=False)
         with torch.no_grad():
             samples = F.sigmoid(self.net.decoder(z)).cpu()
         title = 'rand_samples(iter:{})'.format(self.global_iter)
 
         self.viz.images(samples, env=self.viz_name+'_rand_samples',
-                        opts=dict(title=title), nrow=8)
+                        opts=dict(title=title), nrow=6)
         self.net_mode(train=True)
 
     def viz_traverse(self, limit=3, inter=2/3, loc=-1):
@@ -465,7 +464,7 @@ class Solver(object):
             out = F.sigmoid(self.net.decoder(z))
         self.net_mode(train=True)
         out = out.cpu()
-        grid = make_grid(out[:64], nrow=8, normalize=True)
+        grid = make_grid(out[:36], nrow=6, normalize=True)
         plt.imshow(transforms.ToPILImage()(grid))
         plt.show()
         out = out.numpy().transpose([0, 2, 3, 1])
