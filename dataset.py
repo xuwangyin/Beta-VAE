@@ -104,6 +104,14 @@ def return_data(args):
         train_kwargs = {'root':root, 'transform':transform}
         dset = CustomImageFolder
 
+    elif name.lower() == 'bedroom128':
+        root = os.path.join(dset_dir, 'bedroom128')
+        transform = transforms.Compose([
+            # transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),])
+        train_kwargs = {'root':root, 'transform':transform}
+        dset = CustomImageFolder
+
     elif name.lower() == 'celebahq128':
         root = os.path.join(dset_dir, 'CelebAHQ128PNGLANCZOS')
         transform = transforms.Compose([
