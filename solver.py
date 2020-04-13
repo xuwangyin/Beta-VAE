@@ -416,7 +416,7 @@ class Solver(object):
         self.net_mode(train=True)
 
     def viz_rand_samples(self):
-        np.random.seed(12)
+        np.random.seed(123)
         z = torch.from_numpy(np.random.randn(36, self.z_dim).astype(np.float32)).to(self.device)
         self.net_mode(train=False)
         with torch.no_grad():
@@ -511,7 +511,9 @@ class Solver(object):
         from PIL import Image
         import matplotlib.pyplot as plt
         self.net_mode(train=False)
-        z = torch.randn(num_samples, self.z_dim, device=self.device)
+        np.random.seed(123)
+        z = torch.from_numpy(np.random.randn(num_samples, self.z_dim).astype(np.float32)).to(self.device)
+        # z = torch.randn(num_samples, self.z_dim, device=self.device)
         with torch.no_grad():
             out = F.sigmoid(self.net.decoder(z))
         self.net_mode(train=True)
