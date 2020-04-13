@@ -7,6 +7,7 @@ import os
 from tqdm import tqdm
 import visdom
 import numpy as np
+import socket
 
 import torch
 import torch.optim as optim
@@ -14,9 +15,11 @@ import torch.nn.functional as F
 from torchvision.utils import make_grid, save_image
 import torchvision.transforms as transforms
 
-from utils import cuda, grid2gif
-from model import BetaVAE_H, BetaVAE_B
+from utils import grid2gif
+from model import BetaVAE_H, BetaVAE_B, WAE
 from dataset import return_data
+import ot
+from torch.utils.tensorboard import SummaryWriter
 
 
 def reconstruction_loss(x, x_recon, distribution):
@@ -49,6 +52,17 @@ def kl_divergence(mu, logvar):
 
     return total_kld, dimension_wise_kld, mean_kld
 
+def Wasserstein2_dist(z):
+    N, ndim = z.size()
+    a, b = np.ones((N,)) / N, np.ones((N,)) / N  # points have equal probability of 1/N
+    prior = np.random.randn(N, ndim)
+    M = ot.dist(z.data.cpu().numpy(), prior, metric='sqeuclidean')
+    G = ot.emd(a, b, M, numItermax=500000)
+    ix1, ix2 = np.nonzero(G)
+    prior_var = torch.from_numpy(prior[ix2]).to('cuda')
+    w2 = torch.sqrt(torch.mean(torch.sum(torch.pow(z - prior_var, 2), dim=1)))
+    # w2 = torch.mean(torch.norm(x - z_var, p=2, dim=1))
+    return w2
 
 class DataGather(object):
     def __init__(self):
@@ -62,7 +76,8 @@ class DataGather(object):
                     mean_kld=[],
                     mu=[],
                     var=[],
-                    images=[],)
+                    images=[],
+                    w2_dist=[],)
 
     def insert(self, **kwargs):
         for key in kwargs:
@@ -102,7 +117,7 @@ class Solver(object):
         elif args.dataset.lower() == 'cifar10':
             self.nc = 3
             self.decoder_dist = 'gaussian'
-        elif args.dataset.lower() in ['church128', 'celebahq128', 'bedroom128']:
+        elif args.dataset.lower() in ['church128', 'celebahq128', 'bedroom128', 'dog128']:
             self.nc = 3
             self.decoder_dist = 'gaussian'
         else:
@@ -112,12 +127,14 @@ class Solver(object):
             net = BetaVAE_H
         elif args.model == 'B':
             net = BetaVAE_B
+        elif args.model == 'WAE':
+            net = WAE
         else:
             raise NotImplementedError('only support model H or B')
 
         if args.dataset.lower() == 'cifar10':
             self.net = net(self.z_dim, self.nc, input_size=32).to(self.device)
-        elif args.dataset.lower() in ['church128', 'celebahq128', 'bedroom128']:
+        elif args.dataset.lower() in ['church128', 'celebahq128', 'bedroom128', 'dog128']:
             self.net = net(self.z_dim, self.nc, input_size=128).to(self.device)
         else:
             self.net = net(self.z_dim, self.nc).to(self.device)
@@ -129,10 +146,9 @@ class Solver(object):
         self.viz_on = args.viz_on
         self.win_recon = None
         self.win_kld = None
+        self.win_w2_dist = None
         self.win_mu = None
         self.win_var = None
-        if self.viz_on:
-            self.viz = visdom.Visdom(port=self.viz_port)
 
         self.ckpt_dir = os.path.join(args.ckpt_dir, args.viz_name)
         if not os.path.exists(self.ckpt_dir):
@@ -146,6 +162,8 @@ class Solver(object):
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir, exist_ok=True)
 
+        self.writer = SummaryWriter(self.output_dir, flush_secs=10)
+
         self.gather_step = args.gather_step
         self.display_step = args.display_step
         self.save_step = args.save_step
@@ -154,6 +172,8 @@ class Solver(object):
         self.dataset = args.dataset
         self.batch_size = args.batch_size
         self.data_loader = return_data(args)
+
+        self.test_batch = next(iter(self.data_loader)).to(self.device)
 
         self.gather = DataGather()
 
@@ -170,29 +190,45 @@ class Solver(object):
                 pbar.update(1)
 
                 x = x.to(self.device)
-                x_recon, mu, logvar = self.net(x)
-                recon_loss = reconstruction_loss(x, x_recon, self.decoder_dist)
-                total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
 
-                if self.objective == 'H':
-                    beta_vae_loss = recon_loss + self.beta*total_kld
-                elif self.objective == 'B':
-                    C = torch.clamp(self.C_max/self.C_stop_iter*self.global_iter, 0, self.C_max.item())
-                    beta_vae_loss = recon_loss + self.gamma*(total_kld-C).abs()
+                if self.model in ['H', 'B']:
+                    x_recon, mu, logvar = self.net(x)
+                    recon_loss = reconstruction_loss(x, x_recon, self.decoder_dist)
+                    total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
+
+                    if self.objective == 'H':
+                        loss = recon_loss + self.beta*total_kld
+                    elif self.objective == 'B':
+                        C = torch.clamp(self.C_max/self.C_stop_iter*self.global_iter, 0, self.C_max.item())
+                        loss = recon_loss + self.gamma*(total_kld-C).abs()
+                elif self.model == 'WAE':
+                    x_recon, z = self.net(x)
+                    recon_loss = reconstruction_loss(x, x_recon, self.decoder_dist)
+                    w2_dist = Wasserstein2_dist(z)
+                    loss = recon_loss + w2_dist
 
                 self.optim.zero_grad()
-                beta_vae_loss.backward()
+                loss.backward()
                 self.optim.step()
 
                 if self.viz_on and self.global_iter%self.gather_step == 0:
-                    self.gather.insert(iter=self.global_iter,
-                                       mu=mu.mean(0).data, var=logvar.exp().mean(0).data,
-                                       recon_loss=recon_loss.data, total_kld=total_kld.data,
-                                       dim_wise_kld=dim_wise_kld.data, mean_kld=mean_kld.data)
+                    self.writer.add_scalar('recon-loss', recon_loss.item(), self.global_iter)
+                    if self.model == 'WAE':
+                        self.writer.add_scalar('W2-dist', w2_dist.item(), self.global_iter)
+                    else:
+                        self.writer.add_scalar('mean-kld', mean_kld.item(), self.global_iter)
+                        # self.gather.insert(iter=self.global_iter,
+                        #                    mu=mu.mean(0).data, var=logvar.exp().mean(0).data,
+                        #                    recon_loss=recon_loss.data, total_kld=total_kld.data,
+                        #                    dim_wise_kld=dim_wise_kld.data, mean_kld=mean_kld.data)
 
                 if self.global_iter%self.display_step == 0:
-                    pbar.write('[{}] recon_loss:{:.3f} total_kld:{:.3f} mean_kld:{:.3f}'.format(
-                        self.global_iter, recon_loss.item(), total_kld.item(), mean_kld.item()))
+                    if self.model == 'WAE':
+                        pbar.write('[{}] recon_loss:{:.3f} w2_dist:{:.3f}'.format(
+                            self.global_iter, recon_loss.item(), w2_dist.item()))
+                    else:
+                        pbar.write('[{}] recon_loss:{:.3f} total_kld:{:.3f} mean_kld:{:.3f}'.format(
+                            self.global_iter, recon_loss.item(), total_kld.item(), mean_kld.item()))
 
                     # var = logvar.exp().mean(0).data
                     # var_str = ''
@@ -204,16 +240,10 @@ class Solver(object):
                     #     pbar.write('C:{:.3f}'.format(C.item()))
 
                     if self.viz_on:
-                        if self.dataset.lower() in ['church128', 'celebahq128', 'bedroom128']:
-                            self.gather.insert(images=x.data[:16])
-                            self.gather.insert(images=F.sigmoid(x_recon).data[:16])
-                        else:
-                            self.gather.insert(images=x.data)
-                            self.gather.insert(images=F.sigmoid(x_recon).data)
                         self.viz_reconstruction()
-                        self.viz_lines()
-                        self.gather.flush()
+                        # self.viz_lines()
                         self.viz_rand_samples()
+                        # self.gather.flush()
 
                     # if self.viz_on or self.save_output:
                     #     self.viz_traverse()
@@ -234,33 +264,34 @@ class Solver(object):
 
     def viz_reconstruction(self):
         self.net_mode(train=False)
-        x = self.gather.data['images'][0][:100]
-        x = make_grid(x, normalize=True)
-        x_recon = self.gather.data['images'][1][:100]
-        x_recon = make_grid(x_recon, normalize=True)
-        images = torch.stack([x, x_recon], dim=0).cpu()
-        self.viz.images(images, env=self.viz_name+'_reconstruction',
-                        opts=dict(title=str(self.global_iter)), nrow=10)
+        x_recon, mu, logvar = self.net(self.test_batch)
+        x_recon = F.sigmoid(x_recon)
+        images = make_grid(torch.cat([self.test_batch[:8], x_recon[:8]]).cpu(), nrow=8)
+        self.writer.add_image('recons', images, self.global_iter)
         self.net_mode(train=True)
 
     def viz_lines(self):
         self.net_mode(train=False)
         recon_losses = torch.stack(self.gather.data['recon_loss']).cpu()
 
-        mus = torch.stack(self.gather.data['mu']).cpu()
-        vars = torch.stack(self.gather.data['var']).cpu()
-
-        dim_wise_klds = torch.stack(self.gather.data['dim_wise_kld'])
-        mean_klds = torch.stack(self.gather.data['mean_kld'])
-        total_klds = torch.stack(self.gather.data['total_kld'])
-        klds = torch.cat([dim_wise_klds, mean_klds, total_klds], 1).cpu()
         iters = torch.Tensor(self.gather.data['iter'])
 
-        legend = []
-        for z_j in range(self.z_dim):
-            legend.append('z_{}'.format(z_j))
-        legend.append('mean')
-        legend.append('total')
+        if self.model == 'WAE':
+            w2_dist = torch.Tensor(self.gather.data['w2_dist']).cpu()
+        else:
+            mus = torch.stack(self.gather.data['mu']).cpu()
+            vars = torch.stack(self.gather.data['var']).cpu()
+
+            dim_wise_klds = torch.stack(self.gather.data['dim_wise_kld'])
+            mean_klds = torch.stack(self.gather.data['mean_kld'])
+            total_klds = torch.stack(self.gather.data['total_kld'])
+            klds = torch.cat([dim_wise_klds, mean_klds, total_klds], 1).cpu()
+
+            legend = []
+            for z_j in range(self.z_dim):
+                legend.append('z_{}'.format(z_j))
+            legend.append('mean')
+            legend.append('total')
 
         if self.win_recon is None:
             self.win_recon = self.viz.line(
@@ -284,81 +315,104 @@ class Solver(object):
                                             height=400,
                                             xlabel='iteration',
                                             title='reconsturction loss',))
-
-        if self.win_kld is None:
-            self.win_kld = self.viz.line(
-                                        X=iters,
-                                        Y=klds,
-                                        env=self.viz_name+'_lines',
-                                        opts=dict(
-                                            width=400,
-                                            height=400,
-                                            legend=legend,
-                                            xlabel='iteration',
-                                            title='kl divergence',))
+        if self.model == 'WAE':
+            if self.win_w2_dist is None:
+                self.win_w2_dist = self.viz.line(
+                                            X=iters,
+                                            Y=w2_dist,
+                                            env=self.viz_name+'_lines',
+                                            opts=dict(
+                                                width=400,
+                                                height=400,
+                                                xlabel='iteration',
+                                                title='Wasserstein2 distance',))
+            else:
+                self.win_w2_dist = self.viz.line(
+                                            X=iters,
+                                            Y=w2_dist,
+                                            env=self.viz_name+'_lines',
+                                            win=self.win_w2_dist,
+                                            update='append',
+                                            opts=dict(
+                                                width=400,
+                                                height=400,
+                                                xlabel='iteration',
+                                                title='Wasserstein2 divergence',))
         else:
-            self.win_kld = self.viz.line(
-                                        X=iters,
-                                        Y=klds,
-                                        env=self.viz_name+'_lines',
-                                        win=self.win_kld,
-                                        update='append',
-                                        opts=dict(
-                                            width=400,
-                                            height=400,
-                                            legend=legend,
-                                            xlabel='iteration',
-                                            title='kl divergence',))
+            if self.win_kld is None:
+                self.win_kld = self.viz.line(
+                                            X=iters,
+                                            Y=klds,
+                                            env=self.viz_name+'_lines',
+                                            opts=dict(
+                                                width=400,
+                                                height=400,
+                                                legend=legend,
+                                                xlabel='iteration',
+                                                title='kl divergence',))
+            else:
+                self.win_kld = self.viz.line(
+                                            X=iters,
+                                            Y=klds,
+                                            env=self.viz_name+'_lines',
+                                            win=self.win_kld,
+                                            update='append',
+                                            opts=dict(
+                                                width=400,
+                                                height=400,
+                                                legend=legend,
+                                                xlabel='iteration',
+                                                title='kl divergence',))
 
-        if self.win_mu is None:
-            self.win_mu = self.viz.line(
-                                        X=iters,
-                                        Y=mus,
-                                        env=self.viz_name+'_lines',
-                                        opts=dict(
-                                            width=400,
-                                            height=400,
-                                            legend=legend[:self.z_dim],
-                                            xlabel='iteration',
-                                            title='posterior mean',))
-        else:
-            self.win_mu = self.viz.line(
-                                        X=iters,
-                                        Y=vars,
-                                        env=self.viz_name+'_lines',
-                                        win=self.win_mu,
-                                        update='append',
-                                        opts=dict(
-                                            width=400,
-                                            height=400,
-                                            legend=legend[:self.z_dim],
-                                            xlabel='iteration',
-                                            title='posterior mean',))
+            if self.win_mu is None:
+                self.win_mu = self.viz.line(
+                                            X=iters,
+                                            Y=mus,
+                                            env=self.viz_name+'_lines',
+                                            opts=dict(
+                                                width=400,
+                                                height=400,
+                                                legend=legend[:self.z_dim],
+                                                xlabel='iteration',
+                                                title='posterior mean',))
+            else:
+                self.win_mu = self.viz.line(
+                                            X=iters,
+                                            Y=vars,
+                                            env=self.viz_name+'_lines',
+                                            win=self.win_mu,
+                                            update='append',
+                                            opts=dict(
+                                                width=400,
+                                                height=400,
+                                                legend=legend[:self.z_dim],
+                                                xlabel='iteration',
+                                                title='posterior mean',))
 
-        if self.win_var is None:
-            self.win_var = self.viz.line(
-                                        X=iters,
-                                        Y=vars,
-                                        env=self.viz_name+'_lines',
-                                        opts=dict(
-                                            width=400,
-                                            height=400,
-                                            legend=legend[:self.z_dim],
-                                            xlabel='iteration',
-                                            title='posterior variance',))
-        else:
-            self.win_var = self.viz.line(
-                                        X=iters,
-                                        Y=vars,
-                                        env=self.viz_name+'_lines',
-                                        win=self.win_var,
-                                        update='append',
-                                        opts=dict(
-                                            width=400,
-                                            height=400,
-                                            legend=legend[:self.z_dim],
-                                            xlabel='iteration',
-                                            title='posterior variance',))
+            if self.win_var is None:
+                self.win_var = self.viz.line(
+                                            X=iters,
+                                            Y=vars,
+                                            env=self.viz_name+'_lines',
+                                            opts=dict(
+                                                width=400,
+                                                height=400,
+                                                legend=legend[:self.z_dim],
+                                                xlabel='iteration',
+                                                title='posterior variance',))
+            else:
+                self.win_var = self.viz.line(
+                                            X=iters,
+                                            Y=vars,
+                                            env=self.viz_name+'_lines',
+                                            win=self.win_var,
+                                            update='append',
+                                            opts=dict(
+                                                width=400,
+                                                height=400,
+                                                legend=legend[:self.z_dim],
+                                                xlabel='iteration',
+                                                title='posterior variance',))
         self.net_mode(train=True)
 
     def viz_rand_samples(self):
@@ -367,10 +421,8 @@ class Solver(object):
         self.net_mode(train=False)
         with torch.no_grad():
             samples = F.sigmoid(self.net.decoder(z)).cpu()
-        title = 'rand_samples(iter:{})'.format(self.global_iter)
+        self.writer.add_image('rand_samples', make_grid(samples, nrow=6), self.global_iter)
 
-        self.viz.images(samples, env=self.viz_name+'_rand_samples',
-                        opts=dict(title=title), nrow=6)
         self.net_mode(train=True)
 
     def viz_traverse(self, limit=3, inter=2/3, loc=-1):
@@ -439,7 +491,7 @@ class Solver(object):
             gifs = torch.cat(gifs)
             if self.dataset == 'cifar10':
                 gifs = gifs.view(len(Z), self.z_dim, len(interpolation), self.nc, 32, 32).transpose(1, 2)
-            elif self.dataset in ['church128', 'celebahq128', 'bedroom128']:
+            elif self.dataset in ['church128', 'celebahq128', 'bedroom128', 'dog128']:
                 gifs = gifs.view(len(Z), self.z_dim, len(interpolation), self.nc, 128, 128).transpose(1, 2)
             else:
                 gifs = gifs.view(len(Z), self.z_dim, len(interpolation), self.nc, 64, 64).transpose(1, 2)
@@ -469,7 +521,7 @@ class Solver(object):
         plt.show()
         out = out.numpy().transpose([0, 2, 3, 1])
         out = (out * 255).astype(np.uint8)
-        if self.dataset in ['cifar10', 'church128', 'celebahq128', 'bedroom128']:
+        if self.dataset in ['cifar10', 'church128', 'celebahq128', 'bedroom128', 'dog128']:
             np.save('img_seed_{}_betavae.npy'.format(self.dataset), out)
             return out
         else:

@@ -112,6 +112,14 @@ def return_data(args):
         train_kwargs = {'root':root, 'transform':transform}
         dset = CustomImageFolder
 
+    elif name.lower() == 'dog128':
+        root = os.path.join(dset_dir, 'Wss-train128')
+        transform = transforms.Compose([
+            # transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),])
+        train_kwargs = {'root':root, 'transform':transform}
+        dset = CustomImageFolder
+
     elif name.lower() == 'celebahq128':
         root = os.path.join(dset_dir, 'CelebAHQ128PNGLANCZOS')
         transform = transforms.Compose([

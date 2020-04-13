@@ -22,6 +22,143 @@ class View(nn.Module):
         return tensor.view(self.size)
 
 
+def get_encoder64(nc, z_dim, double_z=True):
+    latent_size = z_dim * 2 if double_z else z_dim
+    return nn.Sequential(
+        nn.Conv2d(nc, 32, 4, 2, 1),  # B,  32, 32, 32
+        nn.ReLU(True),
+        nn.Conv2d(32, 32, 4, 2, 1),  # B,  32, 16, 16
+        nn.ReLU(True),
+        nn.Conv2d(32, 64, 4, 2, 1),  # B,  64,  8,  8
+        nn.ReLU(True),
+        nn.Conv2d(64, 64, 4, 2, 1),  # B,  64,  4,  4
+        nn.ReLU(True),
+        nn.Conv2d(64, 256, 4, 1),  # B, 256,  1,  1
+        nn.ReLU(True),
+        View((-1, 256 * 1 * 1)),  # B, 256
+        nn.Linear(256, latent_size),  # B, z_dim*2
+    )
+
+
+def get_decoder64(nc, z_dim):
+    return nn.Sequential(
+        nn.Linear(z_dim, 256),  # B, 256
+        View((-1, 256, 1, 1)),  # B, 256,  1,  1
+        nn.ReLU(True),
+        nn.ConvTranspose2d(256, 64, 4),  # B,  64,  4,  4
+        nn.ReLU(True),
+        nn.ConvTranspose2d(64, 64, 4, 2, 1),  # B,  64,  8,  8
+        nn.ReLU(True),
+        nn.ConvTranspose2d(64, 32, 4, 2, 1),  # B,  32, 16, 16
+        nn.ReLU(True),
+        nn.ConvTranspose2d(32, 32, 4, 2, 1),  # B,  32, 32, 32
+        nn.ReLU(True),
+        nn.ConvTranspose2d(32, nc, 4, 2, 1),  # B, nc, 64, 64
+    )
+
+def get_encoder32(nc, z_dim, double_z=True):
+    latent_size = z_dim * 2 if double_z else z_dim
+    return nn.Sequential(
+        nn.Conv2d(nc, 32, 4, 2, 1),  # B,  32, 16, 16
+        nn.ReLU(True),
+        nn.Conv2d(32, 64, 4, 2, 1),  # B,  64,  8,  8
+        nn.ReLU(True),
+        nn.Conv2d(64, 64, 4, 2, 1),  # B,  64,  4,  4
+        nn.ReLU(True),
+        nn.Conv2d(64, 256, 4, 1),  # B, 256,  1,  1
+        nn.ReLU(True),
+        View((-1, 256 * 1 * 1)),  # B, 256
+        nn.Linear(256, latent_size),  # B, z_dim*2
+    )
+
+def get_decoder32(nc, z_dim):
+    return nn.Sequential(
+        nn.Linear(z_dim, 256),  # B, 256
+        View((-1, 256, 1, 1)),  # B, 256,  1,  1
+        nn.ReLU(True),
+        nn.ConvTranspose2d(256, 64, 4),  # B,  64,  4,  4
+        nn.ReLU(True),
+        nn.ConvTranspose2d(64, 64, 4, 2, 1),  # B,  64,  8,  8
+        nn.ReLU(True),
+        nn.ConvTranspose2d(64, 32, 4, 2, 1),  # B,  32, 16, 16
+        nn.ReLU(True),
+        nn.ConvTranspose2d(32, nc, 4, 2, 1),  # B,  32, 32, 32
+    )
+
+def get_encoder128(nc, z_dim, double_z=True):
+    latent_size = z_dim * 2 if double_z else z_dim
+    return nn.Sequential(
+        nn.Conv2d(nc, 32, 4, 2, 1),  # B,  32, 32, 32
+        nn.ReLU(True),
+        nn.Conv2d(32, 32, 4, 2, 1),  # B,  32, 32, 32
+        nn.ReLU(True),
+        nn.Conv2d(32, 32, 4, 2, 1),  # B,  32, 16, 16
+        nn.ReLU(True),
+        nn.Conv2d(32, 64, 4, 2, 1),  # B,  64,  8,  8
+        nn.ReLU(True),
+        nn.Conv2d(64, 64, 4, 2, 1),  # B,  64,  4,  4
+        nn.ReLU(True),
+        nn.Conv2d(64, 256, 4, 1),  # B, 256,  1,  1
+        nn.ReLU(True),
+        View((-1, 256 * 1 * 1)),  # B, 256
+        nn.Linear(256, latent_size),  # B, z_dim*2
+    )
+
+def get_decoder128(nc, z_dim):
+    return nn.Sequential(
+        nn.Linear(z_dim, 256),  # B, 256
+        View((-1, 256, 1, 1)),  # B, 256,  1,  1
+        nn.ReLU(True),
+        nn.ConvTranspose2d(256, 64, 4),  # B,  64,  4,  4
+        nn.ReLU(True),
+        nn.ConvTranspose2d(64, 64, 4, 2, 1),  # B,  64,  8,  8
+        nn.ReLU(True),
+        nn.ConvTranspose2d(64, 32, 4, 2, 1),  # B,  32, 16, 16
+        nn.ReLU(True),
+        nn.ConvTranspose2d(32, 32, 4, 2, 1),  # B,  32, 32, 32
+        nn.ReLU(True),
+        nn.ConvTranspose2d(32, 32, 4, 2, 1),  # B, nc, 64, 64
+        nn.ReLU(True),
+        nn.ConvTranspose2d(32, nc, 4, 2, 1),  # B, nc, 64, 64
+    )
+
+class WAE(nn.Module):
+    def __init__(self, z_dim=10, nc=3, input_size=64):
+        super().__init__()
+        self.z_dim = z_dim
+        self.nc = nc
+        assert input_size in [32, 64, 128]
+        self.input_size = input_size
+        if input_size == 64:
+            self.encoder = get_encoder64(nc, z_dim, double_z=False)
+            self.decoder = get_decoder64(nc, z_dim)
+        elif input_size == 32:
+            self.encoder = get_encoder32(nc, z_dim, double_z=False)
+            self.decoder = get_decoder32(nc, z_dim)
+        elif input_size == 128:
+            self.encoder = get_encoder128(nc, z_dim, double_z=False)
+            self.decoder = get_decoder128(nc, z_dim)
+
+        self.weight_init()
+
+    def weight_init(self):
+        for block in self._modules:
+            for m in self._modules[block]:
+                kaiming_init(m)
+
+    def forward(self, x):
+        z = self._encode(x)
+        x_recon = self._decode(z)
+        return x_recon, z
+
+    def _encode(self, x):
+        return self.encoder(x)
+
+    def _decode(self, z):
+        return self.decoder(z)
+
+
+
 class BetaVAE_H(nn.Module):
     """Model proposed in original beta-VAE paper(Higgins et al, ICLR, 2017)."""
 
@@ -32,92 +169,14 @@ class BetaVAE_H(nn.Module):
         assert input_size in [32, 64, 128]
         self.input_size = input_size
         if input_size == 64:
-            self.encoder = nn.Sequential(
-                nn.Conv2d(nc, 32, 4, 2, 1),          # B,  32, 32, 32
-                nn.ReLU(True),
-                nn.Conv2d(32, 32, 4, 2, 1),          # B,  32, 16, 16
-                nn.ReLU(True),
-                nn.Conv2d(32, 64, 4, 2, 1),          # B,  64,  8,  8
-                nn.ReLU(True),
-                nn.Conv2d(64, 64, 4, 2, 1),          # B,  64,  4,  4
-                nn.ReLU(True),
-                nn.Conv2d(64, 256, 4, 1),            # B, 256,  1,  1
-                nn.ReLU(True),
-                View((-1, 256*1*1)),                 # B, 256
-                nn.Linear(256, z_dim*2),             # B, z_dim*2
-            )
-            self.decoder = nn.Sequential(
-                nn.Linear(z_dim, 256),               # B, 256
-                View((-1, 256, 1, 1)),               # B, 256,  1,  1
-                nn.ReLU(True),
-                nn.ConvTranspose2d(256, 64, 4),      # B,  64,  4,  4
-                nn.ReLU(True),
-                nn.ConvTranspose2d(64, 64, 4, 2, 1), # B,  64,  8,  8
-                nn.ReLU(True),
-                nn.ConvTranspose2d(64, 32, 4, 2, 1), # B,  32, 16, 16
-                nn.ReLU(True),
-                nn.ConvTranspose2d(32, 32, 4, 2, 1), # B,  32, 32, 32
-                nn.ReLU(True),
-                nn.ConvTranspose2d(32, nc, 4, 2, 1),  # B, nc, 64, 64
-            )
+            self.encoder = get_encoder64(nc, z_dim, double_z=True)
+            self.decoder = get_decoder64(nc, z_dim)
         elif input_size == 32:
-            self.encoder = nn.Sequential(
-                nn.Conv2d(nc, 32, 4, 2, 1),          # B,  32, 16, 16
-                nn.ReLU(True),
-                nn.Conv2d(32, 64, 4, 2, 1),          # B,  64,  8,  8
-                nn.ReLU(True),
-                nn.Conv2d(64, 64, 4, 2, 1),          # B,  64,  4,  4
-                nn.ReLU(True),
-                nn.Conv2d(64, 256, 4, 1),            # B, 256,  1,  1
-                nn.ReLU(True),
-                View((-1, 256*1*1)),                 # B, 256
-                nn.Linear(256, z_dim*2),             # B, z_dim*2
-            )
-            self.decoder = nn.Sequential(
-                nn.Linear(z_dim, 256),               # B, 256
-                View((-1, 256, 1, 1)),               # B, 256,  1,  1
-                nn.ReLU(True),
-                nn.ConvTranspose2d(256, 64, 4),      # B,  64,  4,  4
-                nn.ReLU(True),
-                nn.ConvTranspose2d(64, 64, 4, 2, 1), # B,  64,  8,  8
-                nn.ReLU(True),
-                nn.ConvTranspose2d(64, 32, 4, 2, 1), # B,  32, 16, 16
-                nn.ReLU(True),
-                nn.ConvTranspose2d(32, nc, 4, 2, 1), # B,  32, 32, 32
-            )
+            self.encoder = get_encoder32(nc, z_dim, double_z=True)
+            self.decoder = get_decoder32(nc, z_dim)
         elif input_size == 128:
-            self.encoder = nn.Sequential(
-                nn.Conv2d(nc, 32, 4, 2, 1),  # B,  32, 32, 32
-                nn.ReLU(True),
-                nn.Conv2d(32, 32, 4, 2, 1),          # B,  32, 32, 32
-                nn.ReLU(True),
-                nn.Conv2d(32, 32, 4, 2, 1),          # B,  32, 16, 16
-                nn.ReLU(True),
-                nn.Conv2d(32, 64, 4, 2, 1),          # B,  64,  8,  8
-                nn.ReLU(True),
-                nn.Conv2d(64, 64, 4, 2, 1),          # B,  64,  4,  4
-                nn.ReLU(True),
-                nn.Conv2d(64, 256, 4, 1),            # B, 256,  1,  1
-                nn.ReLU(True),
-                View((-1, 256*1*1)),                 # B, 256
-                nn.Linear(256, z_dim*2),             # B, z_dim*2
-            )
-            self.decoder = nn.Sequential(
-                nn.Linear(z_dim, 256),               # B, 256
-                View((-1, 256, 1, 1)),               # B, 256,  1,  1
-                nn.ReLU(True),
-                nn.ConvTranspose2d(256, 64, 4),      # B,  64,  4,  4
-                nn.ReLU(True),
-                nn.ConvTranspose2d(64, 64, 4, 2, 1), # B,  64,  8,  8
-                nn.ReLU(True),
-                nn.ConvTranspose2d(64, 32, 4, 2, 1), # B,  32, 16, 16
-                nn.ReLU(True),
-                nn.ConvTranspose2d(32, 32, 4, 2, 1), # B,  32, 32, 32
-                nn.ReLU(True),
-                nn.ConvTranspose2d(32, 32, 4, 2, 1),  # B, nc, 64, 64
-                nn.ReLU(True),
-                nn.ConvTranspose2d(32, nc, 4, 2, 1),  # B, nc, 64, 64
-            )
+            self.encoder = get_encoder128(nc, z_dim, double_z=True)
+            self.decoder = get_decoder128(nc, z_dim)
 
         self.weight_init()
 
